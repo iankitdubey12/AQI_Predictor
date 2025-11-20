@@ -1,250 +1,162 @@
 import requests
 import pandas as pd
-import numpy as np
-from datetime import datetime
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 class WeatherAQIPredictor:
-    """
-    A class to fetch weather and air quality data, and predict future AQI.
-    """
-    def _init_(self, api_key: str):
-        """
-        Initializes the predictor with the OpenWeatherMap API key.
-        """
+    def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url_weather = "http://api.openweathermap.org/data/2.5/weather"
-        self.base_url_forecast = "http://api.openweathermap.org/data/2.5/forecast"
-        self.base_url_aqi = "http://api.openweathermap.org/data/2.5/air_pollution"
         self.base_url_geo = "http://api.openweathermap.org/geo/1.0/direct"
-        self.historical_data = []
-
-    # ==============================================================================
-    # 1. DATA INGESTION
-    # - Collects historical air quality data from various sources (e.g., API).
-    # - Preprocesses the data by handling missing values, outliers, etc.
-    # ==============================================================================
+        self.base_url_aqi_forecast = "http://api.openweathermap.org/data/2.5/air_pollution/forecast"
+        self.base_url_aqi_history = "http://api.openweathermap.org/data/2.5/air_pollution/history"
+        self.base_url_aqi_current = "http://api.openweathermap.org/data/2.5/air_pollution"
 
     def get_coordinates(self, city: str) -> Optional[Tuple[float, float]]:
-        """Gets latitude and longitude for a given city."""
         params = {'q': city, 'limit': 1, 'appid': self.api_key}
         try:
             response = requests.get(self.base_url_geo, params=params)
-            response.raise_for_status()  # Raises an HTTPError for bad responses
+            response.raise_for_status()
             data = response.json()
             if data:
                 return data[0]['lat'], data[0]['lon']
-            else:
-                print(f"Error: Could not find coordinates for {city}.")
-                return None
+            return None
         except requests.exceptions.RequestException as e:
             print(f"Error fetching coordinates: {e}")
             return None
 
-    def fetch_current_weather(self, city: str) -> Optional[Dict[str, Any]]:
-        """Fetches current weather data for a city."""
-        params = {'q': city, 'appid': self.api_key, 'units': 'metric'}
-        try:
-            response = requests.get(self.base_url_weather, params=params)
+    def fetch_aqi_history(self, lat: float, lon: float, days: int = 3) -> Optional[List[Dict[str, Any]]]:
+        end_time = int(datetime.now().timestamp())
+        start_time = int((datetime.now() - timedelta(days=days)).timestamp())
+        params = {'lat': lat, 'lon': lon, 'start': start_time, 'end': end_time, 'appid': self.api_key}
+        try:63
+            response = requests.get(self.base_url_aqi_history, params=params)
             response.raise_for_status()
             data = response.json()
-            return {
-                'city': data['name'],
-                'temperature': data['main']['temp'],
-                'humidity': data['main']['humidity'],
-                'pressure': data['main']['pressure'],
-                'wind_speed': data['wind']['speed'],
-                'description': data['weather'][0]['description'],
-            }
+            history = []
+            for entry in data.get("list", []):
+                history.append({
+                    "timestamp": datetime.fromtimestamp(entry["dt"]),
+                    "aqi": entry["main"]["aqi"],
+                    "pm2_5": entry["components"]["pm2_5"],
+                    "pm10": entry["components"]["pm10"],
+                    "co": entry["components"]["co"],
+                })
+            return history
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching current weather: {e}")
+            print(f"Error fetching AQI history: {e}")
             return None
 
-    def fetch_current_aqi(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
-        """Fetches current Air Quality Index (AQI) data."""
+    def fetch_aqi_current(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
         params = {'lat': lat, 'lon': lon, 'appid': self.api_key}
         try:
-            response = requests.get(self.base_url_aqi, params=params)
+            response = requests.get(self.base_url_aqi_current, params=params)
             response.raise_for_status()
-            data = response.json()['list'][0]
+            data = response.json()
+            entries = data.get("list", [])
+            if not entries:
+                return None
+            entry = entries[0]
             return {
-                'aqi': data['main']['aqi'],
-                'pm2_5': data['components']['pm2_5'],
-                'pm10': data['components']['pm10'],
-                'co': data['components']['co'],
+                "timestamp": datetime.fromtimestamp(entry["dt"]),
+                "aqi": entry["main"]["aqi"],
+                "pm2_5": entry["components"]["pm2_5"],
+                "pm10": entry["components"]["pm10"],
+                "co": entry["components"]["co"],
             }
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching AQI data: {e}")
+            print(f"Error fetching current AQI: {e}")
             return None
 
-    def fetch_weather_forecast(self, city: str) -> Optional[List[Dict[str, Any]]]:
-        """Fetches 5-day weather forecast (at 3-hour intervals)."""
-        params = {'q': city, 'appid': self.api_key, 'units': 'metric'}
+    def fetch_aqi_forecast(self, lat: float, lon: float) -> Optional[List[Dict[str, Any]]]:
+        params = {'lat': lat, 'lon': lon, 'appid': self.api_key}
         try:
-            response = requests.get(self.base_url_forecast, params=params)
+            response = requests.get(self.base_url_aqi_forecast, params=params)
             response.raise_for_status()
             data = response.json()
             forecasts = []
-            for item in data['list']:
+            for entry in data.get("list", []):
                 forecasts.append({
-                    'timestamp': datetime.fromtimestamp(item['dt']),
-                    'temperature': item['main']['temp'],
-                    'humidity': item['main']['humidity'],
-                    'pressure': item['main']['pressure'],
-                    'wind_speed': item['wind']['speed'],
+                    "timestamp": datetime.fromtimestamp(entry["dt"]),
+                    "aqi": entry["main"]["aqi"],
+                    "pm2_5": entry["components"]["pm2_5"],
+                    "pm10": entry["components"]["pm10"],
+                    "co": entry["components"]["co"],
                 })
             return forecasts
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching weather forecast: {e}")
-            return None
-            
-    # ==============================================================================
-    # 2. FEATURE ENGINEERING
-    # - Extracts relevant features from the preprocessed data.
-    # - Creates new features that might be useful for prediction.
-    # ==============================================================================
-    
-    def prepare_data_for_model(self) -> Optional[Tuple[pd.DataFrame, pd.Series]]:
-        """
-        Prepares the collected historical data for model training.
-        This is where preprocessing and feature engineering would occur.
-        """
-        if len(self.historical_data) < 10:
-            print("Not enough historical data for prediction. Need at least 10 readings.")
+            print(f"Error fetching AQI forecast: {e}")
             return None
         
-        df = pd.DataFrame(self.historical_data)
+class AQIGUI:
+    def __init__(self, root, api_key):
+        self.root = root
+        self.root.title("Air Quality Index (AQI) Predictor")
+        self.predictor = WeatherAQIPredictor(api_key)
 
-        # --- Preprocessing (Example) ---
-        # Handle missing values if any, though our current collection method doesn't produce them.
-        df.dropna(inplace=True)
+        self.city_label = ttk.Label(root, text="Enter City:")
+        self.city_label.grid(row=0, column=0, padx=5, pady=5)
+        self.city_entry = ttk.Entry(root, width=30)
+        self.city_entry.grid(row=0, column=1, padx=5, pady=5)
 
-        # --- Feature Extraction ---
-        # Select the features (independent variables) and the target (dependent variable).
-        features = ['temperature', 'humidity', 'pressure', 'wind_speed']
-        target = 'aqi'
-        
-        # --- New Feature Creation (Example) ---
-        # In a real-world scenario with timestamps, you could add features like:
-        # df['hour_of_day'] = df['timestamp'].dt.hour
-        # df['day_of_week'] = df['timestamp'].dt.dayofweek
-        # df['temp_humidity_interaction'] = df['temperature'] * df['humidity']
-        
-        X = df[features]
-        y = df[target]
-        
-        return X, y
+        self.fetch_button = ttk.Button(root, text="Fetch AQI", command=self.fetch_and_display)
+        self.fetch_button.grid(row=0, column=2, padx=5, pady=5)
 
-    # ==============================================================================
-    # 3. MODEL TRAINING & PREDICTION
-    # ==============================================================================
+        self.text = tk.Text(root, width=100, height=20)
+        self.text.grid(row=1, column=0, columnspan=3, padx=10, pady=10)
 
-    def train_aqi_model(self) -> Optional[RandomForestRegressor]:
-        """Trains a model to predict AQI based on historical data."""
-        prepared_data = self.prepare_data_for_model()
-        if prepared_data is None:
-            return None
-        
-        X, y = prepared_data
-        
-        # Split data into training and testing sets
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
-        # Initialize and train the model
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
-        
-        # Evaluate the model's performance on the test set
-        score = model.score(X_test, y_test)
-        print(f"Model R² Score: {score:.3f}")
-        
-        return model
+    def fetch_and_display(self):
+        city = self.city_entry.get().strip()
+        if not city:
+            messagebox.showerror("Input Error", "Please enter a city name.")
+            return
 
-    def predict_future_aqi(self, model: RandomForestRegressor, future_weather: Dict[str, Any]) -> Optional[int]:
-        """Predicts future AQI using a trained model and future weather data."""
-        if model is None:
-            print("Model is not trained. Cannot make a prediction.")
-            return None
-            
-        # Ensure the input data has the same feature structure
-        features = ['temperature', 'humidity', 'pressure', 'wind_speed']
-        X_pred = pd.DataFrame([future_weather])[features]
-        
-        predicted_aqi = model.predict(X_pred)[0]
-        return round(predicted_aqi)
+        coords = self.predictor.get_coordinates(city)
+        if not coords:
+            messagebox.showerror("Error", f"Could not find coordinates for '{city}'.")
+            return
 
-
-# ==============================================================================
-# MAIN EXECUTION
-# ==============================================================================
-
-def main():
-    # IMPORTANT: Replace with your own OpenWeatherMap API key.
-    API_KEY = "ba2346b5c1a8f36abc1f72abcae9c739" 
-    
-    predictor = WeatherAQIPredictor(api_key=API_KEY)
-    city = "Delhi"
-    
-    # --- 1. Fetch Current Weather ---
-    print("=" * 50)
-    print(f"FETCHING CURRENT WEATHER FOR {city.upper()}")
-    print("=" * 50)
-    current_weather = predictor.fetch_current_weather(city)
-    if current_weather:
-        print(f"Temperature: {current_weather['temperature']}°C")
-        print(f"Humidity: {current_weather['humidity']}%")
-        print(f"Description: {current_weather['description']}")
-
-    # --- 2. Fetch Current AQI ---
-    print("\n" + "=" * 50)
-    print(f"FETCHING CURRENT AIR QUALITY FOR {city.upper()}")
-    print("=" * 50)
-    coords = predictor.get_coordinates(city)
-    if coords:
         lat, lon = coords
-        current_aqi = predictor.fetch_current_aqi(lat, lon)
-        if current_aqi:
-            aqi_labels = {1: "Good", 2: "Fair", 3: "Moderate", 4: "Poor", 5: "Very Poor"}
-            aqi_level = current_aqi['aqi']
-            print(f"AQI Level: {aqi_level} ({aqi_labels.get(aqi_level, 'Unknown')})")
-            print(f"PM2.5: {current_aqi['pm2_5']} μg/m³")
+        history_data = self.predictor.fetch_aqi_history(lat, lon, days=3) or []
+        current_data = self.predictor.fetch_aqi_current(lat, lon)
+        current_list = [current_data] if current_data else []
+        forecast_data = self.predictor.fetch_aqi_forecast(lat, lon) or []
+        forecast_one_day = forecast_data[:24]
+        all_data = history_data + current_list + forecast_one_day
 
-    # --- 3. AQI Prediction Demo ---
-    print("\n" + "=" * 50)
-    print("AQI PREDICTION DEMO")
-    print("=" * 50)
-    print("NOTE: Using simulated historical data for this demonstration.")
-    
-    # Simulate collecting data over time for demonstration purposes.
-    # In a real application, you would collect and store this data periodically.
-    for _ in range(50):
-        simulated_data = {
-            'temperature': 25 + np.random.randn() * 5,
-            'humidity': 50 + np.random.randn() * 15,
-            'pressure': 1010 + np.random.randn() * 5,
-            'wind_speed': 5 + np.random.randn() * 2,
-            'aqi': np.random.randint(1, 6) # Random AQI between 1 (Good) and 5 (Very Poor)
-        }
-        predictor.historical_data.append(simulated_data)
-        
-    # Train the model on the simulated historical data
-    model = predictor.train_aqi_model()
-    
-    # Predict AQI based on the current weather conditions
-    if model and current_weather:
-        predicted_value = predictor.predict_future_aqi(model, current_weather)
-        print(f"\nPredicted AQI based on current weather: {predicted_value}")
+        if not all_data:
+            messagebox.showinfo("No Data", "No AQI data available.")
+            return
 
-    # --- 4. Weather Forecast ---
-    print("\n" + "=" * 50)
-    print("WEATHER FORECAST (Next 12 hours)")
-    print("=" * 50)
-    forecasts = predictor.fetch_weather_forecast(city)
-    if forecasts:
-        for forecast in forecasts[:4]: # Show the next 4 intervals (12 hours)
-            print(f"{forecast['timestamp'].strftime('%Y-%m-%d %H:%M')}: {forecast['temperature']:.1f}°C")
+        df = pd.DataFrame(all_data)
+        df["date"] = df["timestamp"].dt.date
+        aqi_labels = {1: "Good", 2: "Fair", 3: "Moderate", 4: "Poor", 5: "Very Poor"}
 
-if _name_ == "_main_":
-    main()
+        self.text.delete(1.0, tk.END)
+        self.text.insert(tk.END, f"Air Quality Data for {city.title()}:\n")
+        self.text.insert(tk.END, "-"*80 + "\n")
+        for entry in all_data:
+            ts = entry["timestamp"].strftime("%Y-%m-%d %H:%M")
+            self.text.insert(tk.END,
+                             f"{ts} → AQI {entry['aqi']} ({aqi_labels.get(entry['aqi'], 'Unknown')}) | "
+                             f"PM2.5={entry['pm2_5']} µg/m³ | PM10={entry['pm10']} µg/m³ | CO={entry['co']} µg/m³\n")
+
+        daily_avg = df.groupby("date")["aqi"].mean().round(1)
+        plt.figure(figsize=(10, 5))
+        plt.plot(daily_avg.index, daily_avg.values, marker='o', color='crimson', linewidth=2)
+        plt.title(f"AQI for Past 3 Days, Today, and Next Day - {city.title()}", fontsize=14, fontweight='bold')
+        plt.xlabel("Date", fontsize=12)
+        plt.ylabel("Average AQI (1–5)", fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.6)
+        for i, val in enumerate(daily_avg.values):
+            plt.text(daily_avg.index[i], val + 0.1, str(val), ha='center', fontsize=10)
+        plt.tight_layout()
+        plt.show()
+
+if __name__ == "__main__":
+    API_KEY = "ba2346b5c1a8f36abc1f72abcae9c739"  
+    root = tk.Tk()
+    gui = AQIGUI(root, API_KEY)
+    root.mainloop()
